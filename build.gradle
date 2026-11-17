@@ -1,0 +1,87 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'io.github.dzolotarev'
+version = '1.0.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+// Игра не использует сторонних зависимостей — только JDK (Swing).
+repositories {
+    mavenCentral()
+}
+
+application {
+    mainClass = 'tetris.Game'
+}
+
+jar {
+    manifest {
+        attributes 'Main-Class': 'tetris.Game'
+    }
+}
+
+// --- Нативная сборка через jpackage (Linux AppImage) ---
+// Запуск: ./gradlew nativeImage
+tasks.register('nativeImage') {
+    group = 'build'
+    description = 'Собирает нативный AppImage через jpackage'
+    dependsOn 'jar'
+
+    doLast {
+        def jpackage = System.getenv('JPACKAGE') ?: 'jpackage'
+        def jarFile = jar.archiveFile.get().asFile
+        def distDir = layout.buildDirectory.dir('jpackage').get().asFile
+        def type = System.getenv('JP_TYPE') ?: 'app-image'
+
+        // jpackage не перезаписывает готовый app-image — очищаем выходной каталог.
+        delete distDir
+        distDir.mkdirs()
+
+        def args = [
+            jpackage,
+            '--name', 'Tetris',
+            '--app-version', project.version.toString(),
+            '--vendor', 'dzolotarev',
+            '--description', 'Тетрис на Java/Swing (SRS, 7-bag, hold, T-спины)',
+            '--input', jar.destinationDirectory.get().asFile.absolutePath,
+            '--main-jar', jarFile.name,
+            '--main-class', 'tetris.Game',
+            '--add-modules', 'java.base,java.desktop',
+            '--jlink-options', '--strip-debug --no-header-files --no-man-pages --compress=2',
+            '--dest', distDir.absolutePath,
+            '--type', type
+        ]
+        exec {
+            commandLine args
+            workingDir project.projectDir
+        }
+        println "Нативная сборка готова: ${distDir}"
+    }
+}
+
+// Упаковка app-image в tar.gz для релизных ассетов.
+// Запуск: ./gradlew packageDist   результат: build/dist/tetris-java-<version>-linux-x64.tar.gz
+tasks.register('packageDist') {
+    group = 'distribution'
+    description = 'Складывает app-image в build/dist/*.tar.gz'
+    dependsOn 'nativeImage'
+
+    doLast {
+        def jpackageDir = layout.buildDirectory.dir('jpackage').get().asFile
+        def outDir = layout.buildDirectory.dir('dist').get().asFile
+        outDir.mkdirs()
+        def archive = new File(outDir, "tetris-java-${project.version}-linux-x64.tar.gz")
+        archive.delete()
+        exec {
+            commandLine 'tar', '-czf', archive.absolutePath, 'Tetris'
+            workingDir jpackageDir
+        }
+        println "Архив готов: ${archive.absolutePath} (${archive.length()} байт)"
+    }
+}
